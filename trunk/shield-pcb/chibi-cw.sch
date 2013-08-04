@@ -38,7 +38,7 @@ encoding utf-8
 Sheet 1 1
 Title "CHIBI-CW 2.4GHz Transceiver Freakduino Shield"
 Date "4 aug 2013"
-Rev "v0.2"
+Rev "v1.0"
 Comp ""
 Comment1 ""
 Comment2 ""
@@ -789,7 +789,7 @@ D6 AC 17 5E 78 01 00 5E 78 E1 85 50 28 F4 3F 47 F6 79 24 2E 91 48 2C 5E BC 78 DF
 AC AB AB 9B 3D 7B 76 79 79 F9 B4 69 D3 3E 90 7B 25 12 89 BB EF BE FB 67 3F FB D9 E9 1D CD 99 C3 
 19 27 0E 00 BA BA BA C6 9C FA 7E 5C FC EF D1 B8 4F 18 9F 5D E2 3E A7 65 A5 F1 63 82 B8 31 E2 73 
 BD E6 30 1E 4C 68 DC 18 31 41 DC 18 F1 FF 01 FB E6 BD DE C7 35 91 78 00 00 00 00 49 45 4E 44 AE 
-42 60 82 0B $EndBitmap
+42 60 82 B6 $EndBitmap
 EndData
 $EndBitmap
 $Comp
