@@ -1,22 +1,6 @@
 /************************************************************/
 /*
-   Chibi LED Brightness Example
-   This is an example of controlling the brighntess of an LED wirelessly. 
-   The command line is implemented along with three commands: led, getsaddr, setsaddr.
-   "getsaddr" gets the address of the node. "setsaddr" sets the address 
-   of the node. Each of the nodes should be set with a unique 16-bit
-   address. The "led" command will change the brightness of an LED connected to pin 9
-   on the remote node. There is also a printout on each node for the received brightness 
-   value. It can be viewed by connecting the node to a serial terminal program.
-   
-   Directions for use:
-   1. Load two nodes with this software.    
-   2. Set unique addresses for each node.
-   3. Connect LED to pin 9 and GND.
-   4. Connect to at least one node via serial terminal program. Ex: Teraterm
-   5. Send led command to remote node: 
-       led <addr> <brightness>
-   Note: the LED brightness value must be a number between 0 and 255
+  TODO: Code description.
 */
 /************************************************************/
 #include <chibi.h>
@@ -222,9 +206,6 @@ void loop()  {
   
   static unsigned int timer = 0;
 
-
-  char dialString[32];
-  
   // temp
   static unsigned char volumeDial = 16;
 
@@ -244,6 +225,7 @@ void loop()  {
   // display "frequency" on oLED display
   if (dialChanged)
   {
+    char dialString[4];
     sprintf(dialString, "%1d.%02d", tuningDial/1000, tuningDial/10 % 100);
     oled16x16string(0, 2*16, dialString);
   }
