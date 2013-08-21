@@ -1,9 +1,27 @@
 /************************************************************/
 /*
-  TODO: Code description.
+   Chibi LED Brightness Example
+   This is an example of controlling the brighntess of an LED wirelessly. 
+   The command line is implemented along with three commands: led, getsaddr, setsaddr.
+   "getsaddr" gets the address of the node. "setsaddr" sets the address 
+   of the node. Each of the nodes should be set with a unique 16-bit
+   address. The "led" command will change the brightness of an LED connected to pin 9
+   on the remote node. There is also a printout on each node for the received brightness 
+   value. It can be viewed by connecting the node to a serial terminal program.
+   
+   Directions for use:
+   1. Load two nodes with this software.    
+   2. Set unique addresses for each node.
+   3. Connect LED to pin 9 and GND.
+   4. Connect to at least one node via serial terminal program. Ex: Teraterm
+   5. Send led command to remote node: 
+       led <addr> <brightness>
+   Note: the LED brightness value must be a number between 0 and 255
 */
 /************************************************************/
 #include <chibi.h>
+#include <ZtLib.h>
+#include <Wire.h>
 
 #define RX_AUDIO_PIN   3 // OC2B
 #define TX_AUDIO_PIN   5 // OC0B
@@ -12,6 +30,137 @@
 #define CW_KEY_PIN     8
 #define LED_PIN        9
 
+#define OLED_ADDRESS   0x27
+#define OLED_TXSPOT_PAGE 2
+#define OLED_RXSPOT_PAGE 3
+
+#define RX_KEY_TIMEOUT 2000
+#define TX_KEY_TIMEOUT 1500
+
+#define oledStr(p, c, s) ZT.ScI2cMxDisplay8x16Str(OLED_ADDRESS,p,c,s);
+
+#define oLEDdelay(t) for(unsigned int volatile dxi=0; dxi < t; dxi++)
+
+const unsigned int audioCenterFreq = 600;  // Hz
+
+
+/** 
+ * FUNCTIONS
+ */
+ 
+
+
+void setRxToneFreq(unsigned int hertz)
+{
+  // OCR2A is TOP. OCR2B is the toggle point, which should be half of OCR2A for 50% duty cycle
+  // OCR2A = 250; --> 500Hz
+  // OCR2A = 96; --> 1300Hz
+  unsigned int top;
+  unsigned char middle;
+  
+  top = 8000000UL / 128 / hertz;
+// Serial.print("RXTOP="); Serial.println(top, DEC);
+  
+  middle = (top / 2);
+  OCR2A = top;
+  OCR2B = middle;
+  TCCR2B = (1<<WGM22) | (1<<CS22);   /* CLK divided by 64 (we're running at 8MHz) */
+  TCCR2A = (1<<COM2B1) | (1<<WGM20); // tone output on (non-inverting)
+  
+  Serial.print("SET RX: "); Serial.println(audioCenterFreq);
+    
+  // oLED: clear the RX spot indicator (whole row)
+  ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_RXSPOT_PAGE, OLED_RXSPOT_PAGE, 0, 159, 0);
+  oLEDdelay(320);
+  // oLED: show RX spot indicator
+  int offset = (hertz - audioCenterFreq)/8;
+  ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_RXSPOT_PAGE, OLED_RXSPOT_PAGE, 63+offset, 65+offset, 0xff);
+  oLEDdelay(320);
+  
+}
+
+void setTxToneFreq(unsigned int hertz)
+{
+  // OCR0A is TOP. OCR0B is the toggle point, which should be half of OCR0A for 50% duty cycle
+  // OCR0A = 250; --> 500Hz
+  // OCR0A = 96; --> 1300Hz
+  unsigned int top;
+  unsigned char middle;
+ 
+  top = 8000000UL / 128 / hertz;
+// Serial.print("TXTOP="); Serial.println(top, DEC);
+  
+  middle = (top / 2);
+  OCR0A = top;
+  OCR0B = middle;
+  TCCR0B = (1<<WGM02) | (1<<CS01) | (1<<CS00); /* CLK divided by 64 (we're running at 8MHz) */
+  TCCR0A = (1<<COM0B1) | (1<<WGM00);           // tone output on (non-inverting)
+
+  // oLED: set transmitting status TX spot indicator
+  ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_TXSPOT_PAGE, OLED_TXSPOT_PAGE, 60, 69, 0xff);
+  oLEDdelay(320);
+
+}
+
+void setNoRxTone()
+{
+  TCCR2A = (1<<WGM20);
+  
+  Serial.println("NO RX");
+  
+  // clear the RX spot indicator (whole row)
+  ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_RXSPOT_PAGE, OLED_RXSPOT_PAGE, 0, 159, 0);
+  oLEDdelay(320);
+}
+
+void setNoTxTone()
+{
+  TCCR0A = (1<<WGM00);
+
+  // oLED: set receiving status TX spot indicator
+  ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_TXSPOT_PAGE, OLED_TXSPOT_PAGE, 0, 159, 0);
+  oLEDdelay(500);
+  ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_TXSPOT_PAGE, OLED_TXSPOT_PAGE, 63, 65, 0xff);
+  oLEDdelay(320);
+}
+
+static unsigned char font16x16[] = {
+0x00,0xf8,0xf8,0xfc,0x0e,0x0e,0x06,0x06,0x06,0x0e,0x0e,0xfc,0xf8,0xf8,0x00,0x00,
+0x00,0x1f,0x1f,0x3f,0x70,0x70,0x60,0x60,0x60,0x70,0x70,0x3f,0x1f,0x1f,0x00,0x00,
+0x00,0x18,0x18,0x18,0x1c,0x1c,0xfe,0xfe,0xfe,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x60,0x60,0x60,0x60,0x60,0x7f,0x7f,0x7f,0x60,0x60,0x60,0x60,0x60,0x00,0x00,
+0x00,0x18,0x18,0x1c,0x0e,0x0e,0x06,0x06,0x86,0xce,0xce,0xfc,0x78,0x78,0x00,0x00,
+0x00,0x78,0x78,0x7c,0x6e,0x6e,0x67,0x67,0x63,0x61,0x61,0x60,0x60,0x60,0x00,0x00,
+0x00,0x06,0x06,0x06,0x86,0x86,0x86,0x86,0x86,0xce,0xce,0xfc,0x78,0x78,0x00,0x00,
+0x00,0x60,0x60,0x60,0x61,0x61,0x61,0x61,0x61,0x73,0x73,0x3f,0x1e,0x1e,0x00,0x00,
+0x00,0x80,0x80,0xc0,0xe0,0xe0,0x70,0x70,0x38,0x1c,0x1c,0xfe,0xfe,0xfe,0x00,0x00,
+0x00,0x07,0x07,0x07,0x06,0x06,0x06,0x06,0x06,0x06,0x06,0x7f,0x7f,0x7f,0x00,0x00,
+0x00,0x7e,0x7e,0x7e,0x66,0x66,0x66,0x66,0x66,0xe6,0xe6,0xc6,0x86,0x86,0x00,0x00,
+0x00,0x18,0x18,0x38,0x70,0x70,0x60,0x60,0x60,0x70,0x70,0x3f,0x1f,0x1f,0x00,0x00,
+0x00,0xf8,0xf8,0xfc,0x8e,0x8e,0x86,0x86,0x86,0x8e,0x8e,0x1c,0x18,0x18,0x00,0x00,
+0x00,0x1f,0x1f,0x3f,0x71,0x71,0x61,0x61,0x61,0x73,0x73,0x3f,0x1e,0x1e,0x00,0x00,
+0x00,0x06,0x06,0x06,0x86,0x86,0xc6,0xc6,0xe6,0x76,0x76,0x3e,0x1e,0x1e,0x00,0x00,
+0x00,0x00,0x00,0x00,0x7f,0x7f,0x7f,0x7f,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+0x00,0x78,0x78,0xfc,0xce,0xce,0x86,0x86,0x86,0xce,0xce,0xfc,0x78,0x78,0x00,0x00,
+0x00,0x1e,0x1e,0x3f,0x73,0x73,0x61,0x61,0x61,0x73,0x73,0x3f,0x1e,0x1e,0x00,0x00,
+0x00,0x78,0x78,0xfc,0xce,0xce,0x86,0x86,0x86,0xce,0xce,0xfc,0xf8,0xf8,0x00,0x00,
+0x00,0x00,0x00,0x00,0x61,0x61,0x71,0x71,0x39,0x1d,0x1d,0x0f,0x07,0x07,0x00,0x00
+};
+
+void oled16x16digit(uint8_t page, uint8_t col, char c)
+{
+  if (c == '.')
+    ZT.ScI2cMxFillArea(OLED_ADDRESS, 1, 1, (3*16)+6, (3*16)+10, 0x0f);
+
+  if ((c < '0') || (c > '9')) return; // ignore non-digits
+  ZT.ScI2cMxDisplayDot16x16(OLED_ADDRESS, page, col, (const char *)&font16x16[(c-'0')*32]);
+}
+
+void oled16x16string(uint8_t page, uint8_t col, char *str)
+{
+  for (byte i=0; str[i]; i++)
+    oled16x16digit(page, col+(i*16), str[i]);
+}
 
 /**************************************************************************/
 // Initialize
@@ -22,7 +171,6 @@ void setup()
   chibiCmdInit(57600);  // initialize the chibi command line to 57600 bps
   chibiInit();
 
-  chibiCmdAdd("led", cmdLed);  // send LED brightness remote node
   chibiCmdAdd("getsaddr", cmdGetShortAddr);  // set the short address of the node
   chibiCmdAdd("setsaddr", cmdSetShortAddr);  // get the short address of the node
 
@@ -36,72 +184,23 @@ void setup()
   
   pinMode(ROT_ENC_A, INPUT_PULLUP);
   pinMode(ROT_ENC_B, INPUT_PULLUP);
+
+  ZT.I2cInit();
+  ZT.ScI2cMxReset(OLED_ADDRESS);
+  delay(5);
+  
+  oledStr(6, 30, "Chibi-CW"); delay(2);
+  oledStr(0, 6*16, "KHz"); delay(2);
+  
+  // TX spot indicator
+  ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_TXSPOT_PAGE, OLED_TXSPOT_PAGE, 63, 65, 0xff);
+
+  // NOTE: Can't use delay() after here,becaue the TX tone generator greaks it
 } 
-
-
-void setRxToneFreq(unsigned int hertz, unsigned char volume=16/*0 to 16*/)
-{
-  // OCR2A is TOP. OCR2B is the toggle point, which should be half of OCR2A for 50% duty cycle
-  // OCR2A = 250; --> 500Hz
-  // OCR2A = 96; --> 1300Hz
-  unsigned int top;
-  unsigned char middle;
-  
-  top = 8000000UL / 128 / hertz;
-// Serial.print("RXTOP="); Serial.println(top, DEC);
-  
-  if (volume < 1) 
-  {
-    setNoRxTone();
-    return;
-  }  
-  // top/2 = full volume. So, 16 steps from 1 to 16. Ex: vol=1, top=96 => middle=3
-  middle = (top / 2 / 16) * ((volume < 17) ? volume : 16);
-  OCR2A = top;
-  OCR2B = middle;
-  TCCR2B = (1<<WGM22) | (1<<CS22);   /* CLK divided by 64 (we're running at 8MHz) */
-  TCCR2A = (1<<COM2B1) | (1<<WGM20); // tone output on (non-inverting)
-}
-
-void setTxToneFreq(unsigned int hertz, unsigned char volume=16/*0 to 16*/)
-{
-  // OCR0A is TOP. OCR0B is the toggle point, which should be half of OCR0A for 50% duty cycle
-  // OCR0A = 250; --> 500Hz
-  // OCR0A = 96; --> 1300Hz
-  unsigned int top;
-  unsigned char middle;
- 
-  top = 8000000UL / 128 / hertz;
-// Serial.print("TXTOP="); Serial.println(top, DEC);
-  
-  if (volume < 1) 
-  {
-    setNoTxTone();
-    return;
-  }  
-  // top/2 = full volume. So, 16 steps from 1 to 16. Ex: vol=1, top=96 => middle=3
-  middle = (top / 2 / 16) * ((volume < 17) ? volume : 16);
-  OCR0A = top;
-  OCR0B = middle;
-  TCCR0B = (1<<WGM02) | (1<<CS01) | (1<<CS00); /* CLK divided by 64 (we're running at 8MHz) */
-  TCCR0A = (1<<COM0B1) | (1<<WGM00);           // tone output on (non-inverting)
-}
-
-void setNoRxTone()
-{
-  TCCR2A = (1<<WGM20);
-}
-
-void setNoTxTone()
-{
-  TCCR0A = (1<<WGM00);
-}
 
 /**************************************************************************/
 // Loop
 /**************************************************************************/
-#define RX_KEY_TIMEOUT 4000
-#define TX_KEY_TIMEOUT 3000
 void loop()  { 
 
   static const int addr = 0xffff; // broadcast
@@ -110,9 +209,8 @@ void loop()  {
   static unsigned int tuningDial = 0;        // virtual dial frequency 0 - 4095
   const unsigned int filterHalfWidth = 250;  // Hz
   static unsigned int lastTuningDial = 0;    // for detectng dial movement
-
+  boolean dialChanged = false; 
   static unsigned int receivedFreq = 0;      // virtual freq, 0 - 4095
-  const unsigned int audioCenterFreq = 600;  // Hz
   static unsigned int audioFreq = 0;         // Hz
   static unsigned int lastAudioFreq = 0;     // Hz
   static unsigned int rxKeyTimer = 0;
@@ -124,16 +222,33 @@ void loop()  {
   
   static unsigned int timer = 0;
 
+
+  char dialString[32];
+  
   // temp
   static unsigned char volumeDial = 16;
 
-  
   timer++;
   
   /* READ TUNING DIAL */
   // Read the tuning dial, ADC0 - 4x over-sampled to 12-bit resolution, with running average
-  if ((timer % 128) == 0) // read slower, to allow freq to change more slowly/realistically as averaged
-    tuningDial = ((tuningDial * 7) + (analogRead(0)<<2)) / 8;
+  // if ((timer % 32) == 0) // read slower, to allow freq to change more slowly/realistically as averaged
+  tuningDial = ((tuningDial * 3) + (analogRead(0)<<2)) / 4;
+  
+  if (tuningDial != lastTuningDial)
+  {
+    dialChanged = true;
+    lastTuningDial = tuningDial;
+  }
+  
+  // display "frequency" on oLED display
+  if (dialChanged)
+  {
+    sprintf(dialString, "%1d.%02d", tuningDial/1000, tuningDial/10 % 100);
+    oled16x16string(0, 2*16, dialString);
+  }
+
+  //oled16x16num(0, 0, dialString);
   
   // debug
   // Serial.println(tuningDial, DEC);
@@ -160,7 +275,7 @@ void loop()  {
         if (audioFreq != lastAudioFreq)
         {
           if (!keyState)            // if not tx key-down state
-            setRxToneFreq(audioFreq, volumeDial);
+            setRxToneFreq(audioFreq);
           digitalWrite(LED_PIN, 1);
           lastAudioFreq = audioFreq;
         }
@@ -172,6 +287,7 @@ void loop()  {
         digitalWrite(LED_PIN, 0);
         lastAudioFreq = 0;
         receivedFreq = 0;
+        rxKeyTimer = 0;
       }
     } // else ignore the data
     
@@ -185,7 +301,7 @@ void loop()  {
     // debug
     //Serial.print("RXTC: "); Serial.print(tuningDial, DEC); Serial.print(" / "); Serial.println(receivedFreq, DEC);
 
-    if (lastTuningDial != tuningDial) // tuning dial has moved since we last checked
+    if (dialChanged) // tuning dial has moved since we last checked
     {
       // are we're still inside the filter
       if (receivedFreq > (tuningDial - filterHalfWidth) && receivedFreq < (tuningDial + filterHalfWidth))
@@ -193,14 +309,13 @@ void loop()  {
         // calculate and update new audio tone frequency
         audioFreq = audioCenterFreq + (int)(tuningDial - receivedFreq);
         if (!keyState)              // if not tx key-down state
-          setRxToneFreq(audioFreq, volumeDial);
+          setRxToneFreq(audioFreq);
       }
       else // we have moved outside the filter pass-band
       {
         setNoRxTone();
         digitalWrite(LED_PIN, 0);
       }
-      lastTuningDial = tuningDial;
     }      
   }
   
@@ -219,7 +334,7 @@ void loop()  {
   
   /* TRANSMITTER KEY TIMEOUT */
   
-  // If the TX key is still down out timoue then we need to resend (refresh) the 
+  // If the TX key is still down, then we need to resend (refresh) the 
   // keydown signal before it times out at the receiver
   if (keyState && txKeyTimer && --txKeyTimer == 0) 
   {
@@ -252,10 +367,9 @@ void loop()  {
 
       keyState = true;
       setNoRxTone();                   // tx monitor tone overrides rx tone
-      setTxToneFreq(monitorToneFreq, volumeDial);  // monitor tone on
+      setTxToneFreq(monitorToneFreq);  // monitor tone on
       
-      // debug
-      Serial.print("TXMAKE: "); Serial.println(tuningDial, DEC);
+      //Serial.print("KEY DOWN at: "); Serial.println(tuningDial, DEC);
     }
   }
   else // KEY-UP
@@ -272,26 +386,20 @@ void loop()  {
       keyState = false;
       setNoTxTone();               // tx monitor tone off
       if (rxKeyTimer)              // (re)enable receiver tone output if needed 
-        setRxToneFreq(audioFreq, volumeDial);
+        setRxToneFreq(audioFreq);
       
-      // debug
-      Serial.print("TXBREAK: "); Serial.println(lastTxFreq, DEC);
+      //Serial.print("KEY UP at: "); Serial.println(lastTxFreq, DEC);
     }
   }
 
   /* TRANSMIT TUNING DIAL CHANGED DURING RX KEY DOWN STATE */
-  if (keyState && lastTuningDial != tuningDial) // is tx key down and dial changed?
+  if (keyState && dialChanged) // is tx key down and dial changed?
   {
-    // debug
-    //Serial.print("TXTC: "); Serial.print(tuningDial, DEC); Serial.print(" / "); Serial.println(receivedFreq, DEC);
-
       txBuf[0] = tuningDial % 256; // 16-bit LO byte
       txBuf[1] = tuningDial / 256; // 16-bit HI byte
-      txBuf[2] = 255;  // KEY-DOWN event
-      chibiTx(addr, txBuf, 3);  // transmit the data
+      txBuf[2] = 255;              // signal KEY-DOWN event
+      chibiTx(addr, txBuf, 3);     // transmit the data
       lastTxFreq = tuningDial;
-
-      lastTuningDial = tuningDial;
 
       txKeyTimer = TX_KEY_TIMEOUT;
   } 
@@ -300,7 +408,7 @@ void loop()  {
   /**************************************************************************/
   /* ROTARY ENCODER -- sadly, we have to poll the rot. encoder becasue      */
   /* chibi uses PCINTs and I don't really want to mess with that code       */ 
-
+/*
   static unsigned char rotEncABLastState = 0;
   unsigned char rotEncABNow, rotEncChanged;
   
@@ -316,45 +424,17 @@ void loop()  {
     if (rotEncChanged & 2)
       if ((rotEncABNow == 0 || rotEncABNow == 3) && volumeDial < 16) volumeDial++;
 
-    if (keyState) setTxToneFreq(monitorToneFreq, volumeDial);
-    else if (rxKeyTimer) setRxToneFreq(audioFreq, volumeDial);
-    
     //Serial.print("ROTENC: "); Serial.println(volumeDial, DEC); // debug
   }
-
-/**************************************************************************/
-
-
-}
-
-/**************************************************************************/
-// USER FUNCTIONS
-/**************************************************************************/
-
-/**************************************************************************/
-/*!
-   Send data to control the servo.
-   Usage: servo <addr> <position>
 */
+
 /**************************************************************************/
-void cmdLed(int argc, char **argv)
-{
-  unsigned int addr;
-  byte ledVal, data[1];
-  
-  // argv[1] is the first argument entered into the command line. This should
-  // be the destination address of the remote node we want to send the command to.
-  // The address is always a hexadecimal value.
-  addr = chibiCmdStr2Num(argv[1], 16);
-  
-  // argv[2] is the second argument entered into the command line. This should
-  // be the servo position. We're going to send this data to the remote node.
-  ledVal = chibiCmdStr2Num(argv[2], 10);
-  data[0] = ledVal;
-  
-  // Send out the data
-  chibiTx(addr, data, 1);
+
 }
+
+/**************************************************************************/
+// CHIBI USER CMD FUNCTIONS
+/**************************************************************************/
 
 /**************************************************************************/
 /*!
