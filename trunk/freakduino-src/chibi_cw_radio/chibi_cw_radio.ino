@@ -25,14 +25,13 @@
 
 #define oLEDdelay(t) for(unsigned int volatile dxi=0; dxi < t; dxi++)
 
+// TODO: Make changeable in a menu
 const unsigned int audioCenterFreq = 600;  // Hz
 
 
 /** 
  * FUNCTIONS
  */
- 
-
 
 void setRxToneFreq(unsigned int hertz)
 {
@@ -108,6 +107,9 @@ void setNoTxTone()
   oLEDdelay(320);
 }
 
+// TODO: This font table should probably go into PROGMEM space. I'll leave it
+// until I actually need the RAM (320 bytes of it.)
+// 16x16 OLED format font -- characters '0' through '9', 32 bytes each.
 static unsigned char font16x16[] = {
 0x00,0xf8,0xf8,0xfc,0x0e,0x0e,0x06,0x06,0x06,0x0e,0x0e,0xfc,0xf8,0xf8,0x00,0x00,
 0x00,0x1f,0x1f,0x3f,0x70,0x70,0x60,0x60,0x60,0x70,0x70,0x3f,0x1f,0x1f,0x00,0x00,
