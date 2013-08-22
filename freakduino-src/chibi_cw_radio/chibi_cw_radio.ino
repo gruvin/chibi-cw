@@ -21,6 +21,8 @@
 #define RX_KEY_TIMEOUT 2000
 #define TX_KEY_TIMEOUT 1500
 
+#define CHIBI_CW_IDENT 0xCC
+
 #define oledStr(p, c, s) ZT.ScI2cMxDisplay8x16Str(OLED_ADDRESS,p,c,s);
 
 #define oLEDdelay(t) for(unsigned int volatile dxi=0; dxi < t; dxi++)
@@ -134,7 +136,7 @@ prog_uchar font16x16[] PROGMEM = {
 void oled16x16digit(uint8_t page, uint8_t col, char c)
 {
   if (c == '.')
-    ZT.ScI2cMxFillArea(OLED_ADDRESS, 1, 1, (3*16)+6, (3*16)+10, 0x0f);
+    ZT.ScI2cMxFillArea(OLED_ADDRESS, 1, 1, (3*16)+5, (3*16)+9, 0x0f);
 
   if ((c < '0') || (c > '9')) return; // ignore non-digits
   ZT.ScI2cMxDisplayDot16x16_prog(OLED_ADDRESS, page, col, (prog_char *)&(font16x16[(c-'0')*32]));
@@ -149,6 +151,19 @@ void oled16x16string(uint8_t page, uint8_t col, char *str)
 /**************************************************************************/
 // Initialize
 /**************************************************************************/
+
+struct ccBuffer {
+  byte id;            // Chibi-CW identifier 0xCC, to help filter out foreign traffic
+  word freq;          // 16-bit virtualFreq
+  byte state;         // 8-bit state (currently, 255= key down, 0 = key up)
+  char callsign[7];   // 6-character callsign, with null terminator
+};    
+static struct ccBuffer txBuf;
+  
+union {
+  struct ccBuffer rxBuf;
+  byte buf[CHB_MAX_PAYLOAD];
+} rxData;
 
 void setup()  
 { 
@@ -174,12 +189,15 @@ void setup()
   delay(5);
   
   oledStr(6, 30, "Chibi-CW"); delay(2);
-  oledStr(0, 6*16, "KHz"); delay(2);
+  oledStr(0, 6*16, "KVz"); delay(2); // Kilo-Virtz (Vi)rtual He(rtz)
   
   // TX spot indicator
   ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_TXSPOT_PAGE, OLED_TXSPOT_PAGE, 63, 65, 0xff);
 
   // NOTE: Can't use delay() after here,becaue the TX tone generator greaks it
+  
+  //temp
+  strcpy(txBuf.callsign, "ZL1HIT"); 
 } 
 
 /**************************************************************************/
@@ -187,14 +205,13 @@ void setup()
 /**************************************************************************/
 void loop()  { 
 
-  static const int addr = 0xffff; // broadcast
-  static uint8_t txBuf[3] = { 0, 0, 0 };     // [0-1]=16-bit virtualFreq, [2]=8-bit boolean key - up or down
+  static const int addr = 0xffff;            // broadcast
   
   static unsigned int tuningDial = 0;        // virtual dial frequency 0 - 4095
   const unsigned int filterHalfWidth = 250;  // Hz
+  static struct ccBuffer *rxBuf = &rxData.rxBuf;
   static unsigned int lastTuningDial = 0;    // for detectng dial movement
   boolean dialChanged = false; 
-  static unsigned int receivedFreq = 0;      // virtual freq, 0 - 4095
   static unsigned int audioFreq = 0;         // Hz
   static unsigned int lastAudioFreq = 0;     // Hz
   static unsigned int rxKeyTimer = 0;
@@ -202,7 +219,7 @@ void loop()  {
   static boolean keyState = false;
   static unsigned int lastTxFreq = 0;        // virtual dial frequency 0 - 4095
   static unsigned int txKeyTimer = 0;
-  const unsigned int monitorToneFreq = 600; // Hz
+  const unsigned int monitorToneFreq = 600;  // Hz
   
   static unsigned int timer = 0;
 
@@ -212,9 +229,9 @@ void loop()  {
   timer++;
   
   /* READ TUNING DIAL */
-  // Read the tuning dial, ADC0 - 4x over-sampled to 12-bit resolution, with running average
+  // Read the tuning dial, ADC0 - 2x over-sampled to 11-bit resolution, with running average
   // if ((timer % 32) == 0) // read slower, to allow freq to change more slowly/realistically as averaged
-  tuningDial = ((tuningDial * 3) + (analogRead(0)<<2)) / 4;
+  tuningDial = ((tuningDial * 3) + ((analogRead(0)+500)<<1)) / 4;
   
   if (tuningDial != lastTuningDial)
   {
@@ -226,8 +243,9 @@ void loop()  {
   if (dialChanged)
   {
     char dialString[4];
-    sprintf(dialString, "%1d.%02d", tuningDial/1000, tuningDial/10 % 100);
-    oled16x16string(0, 2*16, dialString);
+    // Have the display read 28-30MHz
+    sprintf(dialString, "%2d.%02d", (tuningDial/1000)+27, tuningDial/10 % 100);
+    oled16x16string(0, 1*16, dialString);
   }
 
   //oled16x16num(0, 0, dialString);
@@ -242,18 +260,17 @@ void loop()  {
   chibiCmdPoll();       // poll the command line for any user input from the serial port
   if (chibiDataRcvd())
   {
-    byte buf[CHB_MAX_PAYLOAD];
-    chibiGetData(buf);
- 
-    receivedFreq = buf[0] + (buf[1] * 256); // 16-bit, little endian
- 
+    chibiGetData((uint8_t *)rxData.buf);
+
+    // require 0xCC to be first byte or ignore entire packet
+    
     // is the received signal within our filter pass-band?
-    if (receivedFreq > (tuningDial - filterHalfWidth) && receivedFreq < (tuningDial + filterHalfWidth))
+    if (rxBuf->freq > (tuningDial - filterHalfWidth) && rxBuf->freq < (tuningDial + filterHalfWidth))
     {
       // is this a key odwn or key-up event?
-      if (buf[2])
+      if (rxBuf->state == 255)
       { // KEY-DOWN event
-        audioFreq = audioCenterFreq + (int)(tuningDial - receivedFreq);
+        audioFreq = audioCenterFreq + (int)(tuningDial - rxBuf->freq);
         if (audioFreq != lastAudioFreq)
         {
           if (!keyState)            // if not tx key-down state
@@ -268,13 +285,14 @@ void loop()  {
         setNoRxTone();
         digitalWrite(LED_PIN, 0);
         lastAudioFreq = 0;
-        receivedFreq = 0;
+        rxBuf->freq = 0;
         rxKeyTimer = 0;
       }
     } // else ignore the data
     
     // debug
-    Serial.print("RXD: "); Serial.print(receivedFreq, DEC); Serial.print(" / "); Serial.println(audioFreq, DEC);
+    Serial.print("RXID: "); Serial.println(rxBuf->id, HEX);
+    Serial.print("RXD: "); Serial.print(rxBuf->freq, DEC); Serial.print(" / "); Serial.println(audioFreq, DEC);
   }
   
   /* RECEIVE TUNING DIAL CHANGED DURING RX KEY DOWN STATE */
@@ -286,10 +304,10 @@ void loop()  {
     if (dialChanged) // tuning dial has moved since we last checked
     {
       // are we're still inside the filter
-      if (receivedFreq > (tuningDial - filterHalfWidth) && receivedFreq < (tuningDial + filterHalfWidth))
+      if (rxBuf->freq > (tuningDial - filterHalfWidth) && rxBuf->freq < (tuningDial + filterHalfWidth))
       {
         // calculate and update new audio tone frequency
-        audioFreq = audioCenterFreq + (int)(tuningDial - receivedFreq);
+        audioFreq = audioCenterFreq + (int)(tuningDial - rxBuf->freq);
         if (!keyState)              // if not tx key-down state
           setRxToneFreq(audioFreq);
       }
@@ -320,13 +338,11 @@ void loop()  {
   // keydown signal before it times out at the receiver
   if (keyState && txKeyTimer && --txKeyTimer == 0) 
   {
-      unsigned int freq;
-      freq = (lastTxFreq) ? lastTxFreq : tuningDial;
-      txBuf[0] = freq % 256; // 16-bit LO byte
-      txBuf[1] = freq / 256; // 16-bit HI byte
-      txBuf[2] = 255;  // KEY-DOWN event
-      chibiTx(addr, txBuf, 3);  // transmit the data
-      lastTxFreq = freq;
+      txBuf.id = CHIBI_CW_IDENT;
+      txBuf.freq = (lastTxFreq) ? lastTxFreq : tuningDial;
+      txBuf.state = 255;  // KEY-DOWN event
+      chibiTx(addr, (uint8_t *)&txBuf, sizeof(txBuf));  // transmit the data
+      lastTxFreq = txBuf.freq;
       
       txKeyTimer = TX_KEY_TIMEOUT;
       
@@ -339,10 +355,10 @@ void loop()  {
   {
     if (!keyState) // send KEY-UP event only if key was last UP
     {
-      txBuf[0] = tuningDial % 256; // 16-bit LO byte
-      txBuf[1] = tuningDial / 256; // 16-bit HI byte
-      txBuf[2] = 255;              // signal KEY-DOWN event
-      chibiTx(addr, txBuf, 3);     // transmit the data
+      txBuf.id = CHIBI_CW_IDENT;
+      txBuf.freq = tuningDial;
+      txBuf.state = 255;  // KEY-DOWN event
+      chibiTx(addr, (uint8_t *)&txBuf, sizeof(txBuf));  // transmit the data
       lastTxFreq = tuningDial;
       
       txKeyTimer = TX_KEY_TIMEOUT;
@@ -351,7 +367,7 @@ void loop()  {
       setNoRxTone();                   // tx monitor tone overrides rx tone
       setTxToneFreq(monitorToneFreq);  // monitor tone on
       
-      //Serial.print("KEY DOWN at: "); Serial.println(tuningDial, DEC);
+      Serial.print("KEY DOWN at: "); Serial.println(txBuf.freq, DEC);
     }
   }
   else // KEY-UP
@@ -359,10 +375,10 @@ void loop()  {
     if (keyState) // send KEY-UP event only if key was last DOWN
     {
       // send KEY-UP events on same virutal freq as last KEY-UP was sent
-      txBuf[0] = lastTxFreq % 256; // 16-bit LO byte
-      txBuf[1] = lastTxFreq / 256; // 16-bit HI byte
-      txBuf[2] = 0;                // signal KEY-UP event
-      chibiTx(addr, txBuf, 3);     // transmit the data
+      txBuf.id = CHIBI_CW_IDENT;
+      txBuf.freq = lastTxFreq;
+      txBuf.state = 0;  // KEY-UP event
+      chibiTx(addr, (uint8_t *)&txBuf, sizeof(txBuf));  // transmit the data
       lastTxFreq = 0;
       
       keyState = false;
@@ -377,10 +393,10 @@ void loop()  {
   /* TRANSMIT TUNING DIAL CHANGED DURING RX KEY DOWN STATE */
   if (keyState && dialChanged) // is tx key down and dial changed?
   {
-      txBuf[0] = tuningDial % 256; // 16-bit LO byte
-      txBuf[1] = tuningDial / 256; // 16-bit HI byte
-      txBuf[2] = 255;              // signal KEY-DOWN event
-      chibiTx(addr, txBuf, 3);     // transmit the data
+      txBuf.id = CHIBI_CW_IDENT;
+      txBuf.freq = tuningDial;
+      txBuf.state = 255;  // KEY-DOWN event
+      chibiTx(addr, (uint8_t *)&txBuf, sizeof(txBuf));  // transmit the data
       lastTxFreq = tuningDial;
 
       txKeyTimer = TX_KEY_TIMEOUT;
