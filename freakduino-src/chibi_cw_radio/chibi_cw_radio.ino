@@ -188,7 +188,7 @@ void setup()
   ZT.ScI2cMxReset(OLED_ADDRESS);
   delay(5);
   
-  oledStr(6, 30, "Chibi-CW"); delay(2);
+  oledStr(6, 64-strlen("Chibi-CW")*4, "Chibi-CW"); delay(2);
   oledStr(0, 6*16, "KVz"); delay(2); // Kilo-Virtz (Vi)rtual He(rtz)
   
   // TX spot indicator
@@ -222,7 +222,8 @@ void loop()  {
   const unsigned int monitorToneFreq = 600;  // Hz
   
   static unsigned int timer = 0;
-
+  static unsigned int callsignTimer = 0;
+  
   // temp
   static unsigned char volumeDial = 16;
 
@@ -263,38 +264,49 @@ void loop()  {
     chibiGetData((uint8_t *)rxData.buf);
 
     // require 0xCC to be first byte or ignore entire packet
-    
-    // is the received signal within our filter pass-band?
-    if (rxBuf->freq > (tuningDial - filterHalfWidth) && rxBuf->freq < (tuningDial + filterHalfWidth))
+    if (rxBuf->id == CHIBI_CW_IDENT)
     {
-      // is this a key odwn or key-up event?
-      if (rxBuf->state == 255)
-      { // KEY-DOWN event
-        audioFreq = audioCenterFreq + (int)(tuningDial - rxBuf->freq);
-        if (audioFreq != lastAudioFreq)
-        {
-          if (!keyState)            // if not tx key-down state
-            setRxToneFreq(audioFreq);
-          digitalWrite(LED_PIN, 1);
-          lastAudioFreq = audioFreq;
-        }
-        rxKeyTimer = RX_KEY_TIMEOUT;
-      }
-      else // KEY-UP event
+      // is the received signal within our filter pass-band?
+      if (rxBuf->freq > (tuningDial - filterHalfWidth) && rxBuf->freq < (tuningDial + filterHalfWidth))
       {
-        setNoRxTone();
-        digitalWrite(LED_PIN, 0);
-        lastAudioFreq = 0;
-        rxBuf->freq = 0;
-        rxKeyTimer = 0;
-      }
-    } // else ignore the data
+        // is this a key odwn or key-up event?
+        if (rxBuf->state == 255)
+        { // KEY-DOWN event
+          audioFreq = audioCenterFreq + (int)(tuningDial - rxBuf->freq);
+          if (audioFreq != lastAudioFreq)
+          {
+            if (!keyState)            // if not tx key-down state
+              setRxToneFreq(audioFreq);
+            digitalWrite(LED_PIN, 1);
+            lastAudioFreq = audioFreq;
+          }
+          rxKeyTimer = RX_KEY_TIMEOUT;
+          
+          // Display received callsign
+          oledStr(4, 64-strlen(rxBuf->callsign)*4, rxBuf->callsign);
+          callsignTimer = 5000;
+          oLEDdelay(320);
+        }
+        else // KEY-UP event
+        {
+          setNoRxTone();
+          digitalWrite(LED_PIN, 0);
+          lastAudioFreq = 0;
+          rxBuf->freq = 0;
+          rxKeyTimer = 0;
+        }
+      } // else ignore the data
+    } // else ignore (bad ID)
     
     // debug
-    Serial.print("RXID: "); Serial.println(rxBuf->id, HEX);
     Serial.print("RXD: "); Serial.print(rxBuf->freq, DEC); Serial.print(" / "); Serial.println(audioFreq, DEC);
   }
-  
+
+  if (--callsignTimer == 0)
+  {
+    oledStr(4, 64-6*4, "      "); 
+    oLEDdelay(320);
+  } 
   /* RECEIVE TUNING DIAL CHANGED DURING RX KEY DOWN STATE */
   if (rxKeyTimer) // is rx key down? (if so, we can assume there is a valid receivedFreq) 
   {
