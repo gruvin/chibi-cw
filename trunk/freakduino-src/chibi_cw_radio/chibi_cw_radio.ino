@@ -153,10 +153,11 @@ void oled16x16string(uint8_t page, uint8_t col, char *str)
 /**************************************************************************/
 
 struct ccBuffer {
-  byte id;            // Chibi-CW identifier 0xCC, to help filter out foreign traffic
+  byte id1;           // start of Chibi-CW packet identifier (0xCC)
   word freq;          // 16-bit virtualFreq
   byte state;         // 8-bit state (currently, 255= key down, 0 = key up)
   char callsign[7];   // 6-character callsign, with null terminator
+  byte id2;           // end of Chibi-CW packet identifier (0xCC)
 };    
 static struct ccBuffer txBuf;
   
@@ -198,6 +199,9 @@ void setup()
   
   //temp
   strcpy(txBuf.callsign, "ZL1HIT"); 
+  
+  txBuf.id1 = CHIBI_CW_IDENT;
+  txBuf.id2 = CHIBI_CW_IDENT;
 } 
 
 /**************************************************************************/
@@ -264,7 +268,7 @@ void loop()  {
     chibiGetData((uint8_t *)rxData.buf);
 
     // require 0xCC to be first byte or ignore entire packet
-    if (rxBuf->id == CHIBI_CW_IDENT)
+    if ((rxBuf->id1 == CHIBI_CW_IDENT) && (rxBuf->id2 == CHIBI_CW_IDENT))
     {
       // is the received signal within our filter pass-band?
       if (rxBuf->freq > (tuningDial - filterHalfWidth) && rxBuf->freq < (tuningDial + filterHalfWidth))
@@ -350,7 +354,6 @@ void loop()  {
   // keydown signal before it times out at the receiver
   if (keyState && txKeyTimer && --txKeyTimer == 0) 
   {
-      txBuf.id = CHIBI_CW_IDENT;
       txBuf.freq = (lastTxFreq) ? lastTxFreq : tuningDial;
       txBuf.state = 255;  // KEY-DOWN event
       chibiTx(addr, (uint8_t *)&txBuf, sizeof(txBuf));  // transmit the data
@@ -367,7 +370,6 @@ void loop()  {
   {
     if (!keyState) // send KEY-UP event only if key was last UP
     {
-      txBuf.id = CHIBI_CW_IDENT;
       txBuf.freq = tuningDial;
       txBuf.state = 255;  // KEY-DOWN event
       chibiTx(addr, (uint8_t *)&txBuf, sizeof(txBuf));  // transmit the data
@@ -387,7 +389,6 @@ void loop()  {
     if (keyState) // send KEY-UP event only if key was last DOWN
     {
       // send KEY-UP events on same virutal freq as last KEY-UP was sent
-      txBuf.id = CHIBI_CW_IDENT;
       txBuf.freq = lastTxFreq;
       txBuf.state = 0;  // KEY-UP event
       chibiTx(addr, (uint8_t *)&txBuf, sizeof(txBuf));  // transmit the data
@@ -405,7 +406,6 @@ void loop()  {
   /* TRANSMIT TUNING DIAL CHANGED DURING RX KEY DOWN STATE */
   if (keyState && dialChanged) // is tx key down and dial changed?
   {
-      txBuf.id = CHIBI_CW_IDENT;
       txBuf.freq = tuningDial;
       txBuf.state = 255;  // KEY-DOWN event
       chibiTx(addr, (uint8_t *)&txBuf, sizeof(txBuf));  // transmit the data
