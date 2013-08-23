@@ -173,13 +173,12 @@ void setTxBufCallsign()
   byte d;
   byte i = 0;
   do {
-    d = EEPROM.read(ea);
+    d = EEPROM.read(ea++);
     if (d > 0 && (d < ' ' || d > '_')) { // if any invalid chars
       strncpy(txBuf.callsign, "CALLSIGN", MAX_CALLSIGN_LENGTH);
       break;
     }
     txBuf.callsign[i++] = (char)d;
-    ea++;
   } while (d && i < MAX_CALLSIGN_LENGTH+1); // include the terminating null
 }
 
