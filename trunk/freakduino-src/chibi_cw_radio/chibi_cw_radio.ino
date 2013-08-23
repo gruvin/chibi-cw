@@ -6,6 +6,7 @@
 #include <chibi.h>
 #include <ZtLib.h>
 #include <Wire.h>
+#include <EEPROM.h>
 
 #define RX_AUDIO_PIN   3 // OC2B
 #define TX_AUDIO_PIN   5 // OC0B
@@ -22,6 +23,8 @@
 #define TX_KEY_TIMEOUT 1500
 
 #define CHIBI_CW_IDENT 0xCC
+#define MAX_CALLSIGN_LENGTH 16
+#define EEPROM_CALLSIGN_ADDR 16 // chibi used 8 bytes in addresses 0-7
 
 #define oledStr(p, c, s) ZT.ScI2cMxDisplay8x16Str(OLED_ADDRESS,p,c,s);
 
@@ -29,6 +32,21 @@
 
 // TODO: Make changeable in a menu
 const unsigned int audioCenterFreq = 600;  // Hz
+
+
+struct ccBuffer {
+  byte id1;           // start of Chibi-CW packet identifier (0xCC)
+  word freq;          // 16-bit virtualFreq
+  byte state;         // 8-bit state (currently, 255= key down, 0 = key up)
+  char callsign[MAX_CALLSIGN_LENGTH+1];   // callsign, with null terminator
+  byte id2;           // end of Chibi-CW packet identifier (0xCC)
+};    
+static struct ccBuffer txBuf;
+  
+union {
+  struct ccBuffer rxBuf;
+  byte buf[CHB_MAX_PAYLOAD];
+} rxData;
 
 
 /** 
@@ -84,14 +102,11 @@ void setTxToneFreq(unsigned int hertz)
   // oLED: set transmitting status TX spot indicator
   ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_TXSPOT_PAGE, OLED_TXSPOT_PAGE, 60, 69, 0xff);
   oLEDdelay(320);
-
 }
 
 void setNoRxTone()
 {
   TCCR2A = (1<<WGM20);
-  
-  Serial.println("NO RX");
   
   // clear the RX spot indicator (whole row)
   ZT.ScI2cMxFillArea(OLED_ADDRESS, OLED_RXSPOT_PAGE, OLED_RXSPOT_PAGE, 0, 159, 0);
@@ -148,23 +163,29 @@ void oled16x16string(uint8_t page, uint8_t col, char *str)
     oled16x16digit(page, col+(i*16), str[i]);
 }
 
+/*
+ * Retrieve this radio's callsign from EEPROM and store
+ * it in txBuf.callsign
+ */
+void setTxBufCallsign()
+{
+  int ea = EEPROM_CALLSIGN_ADDR;
+  byte d;
+  byte i = 0;
+  do {
+    d = EEPROM.read(ea);
+    if (d > 0 && (d < ' ' || d > '_')) { // if any invalid chars
+      strncpy(txBuf.callsign, "CALLSIGN", MAX_CALLSIGN_LENGTH);
+      break;
+    }
+    txBuf.callsign[i++] = (char)d;
+    ea++;
+  } while (d && i < MAX_CALLSIGN_LENGTH+1); // include the terminating null
+}
+
 /**************************************************************************/
 // Initialize
 /**************************************************************************/
-
-struct ccBuffer {
-  byte id1;           // start of Chibi-CW packet identifier (0xCC)
-  word freq;          // 16-bit virtualFreq
-  byte state;         // 8-bit state (currently, 255= key down, 0 = key up)
-  char callsign[7];   // 6-character callsign, with null terminator
-  byte id2;           // end of Chibi-CW packet identifier (0xCC)
-};    
-static struct ccBuffer txBuf;
-  
-union {
-  struct ccBuffer rxBuf;
-  byte buf[CHB_MAX_PAYLOAD];
-} rxData;
 
 void setup()  
 { 
@@ -173,6 +194,9 @@ void setup()
 
   chibiCmdAdd("getsaddr", cmdGetShortAddr);  // set the short address of the node
   chibiCmdAdd("setsaddr", cmdSetShortAddr);  // get the short address of the node
+  chibiCmdAdd("getcall", cmdGetCallsign);   // get this radio's callsign
+  chibiCmdAdd("setcall", cmdSetCallsign);   // set this radio's callsign
+
 
   analogReference(EXTERNAL);
 
@@ -202,6 +226,7 @@ void setup()
   
   txBuf.id1 = CHIBI_CW_IDENT;
   txBuf.id2 = CHIBI_CW_IDENT;
+  setTxBufCallsign();
 } 
 
 /**************************************************************************/
@@ -308,7 +333,7 @@ void loop()  {
 
   if (--callsignTimer == 0)
   {
-    oledStr(4, 64-6*4, "      "); 
+    ZT.ScI2cMxFillArea(OLED_ADDRESS, 4, 5, 0, 128, 0);
     oLEDdelay(320);
   } 
   /* RECEIVE TUNING DIAL CHANGED DURING RX KEY DOWN STATE */
@@ -473,3 +498,35 @@ void cmdSetShortAddr(int arg_cnt, char **args)
   val = chibiCmdStr2Num(args[1], 16);
   chibiSetShortAddr(val);
 }    
+
+/*
+    Retrieve up to 6 chars in EEPROM at address 0 as this
+    radio user's callsign
+*/
+void cmdGetCallsign(int arg_cnt, char **args)
+{
+  Serial.print("Callsign: "); Serial.println(txBuf.callsign);
+}
+
+
+/*
+    Store up to 6 chars in EEPROM at address 0 as this
+    radio user's callsign
+*/
+void cmdSetCallsign(int arg_cnt, char **args)
+{
+  if (arg_cnt < 2) return;
+  byte i;
+  int ea;
+  for (ea = EEPROM_CALLSIGN_ADDR, i = 0; 
+       i < MAX_CALLSIGN_LENGTH+1; 
+       ea++, i++)
+  {
+    byte d = (i < MAX_CALLSIGN_LENGTH) ? toupper(args[1][i]) : 0;
+    EEPROM.write(ea, d); // capitalize
+    if (d == 0) break;
+  }
+  setTxBufCallsign();
+  Serial.print("SetCallsign: "); Serial.println(txBuf.callsign);
+}
+
