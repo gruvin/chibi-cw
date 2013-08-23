@@ -507,22 +507,18 @@ void cmdGetCallsign(int arg_cnt, char **args)
   Serial.print("Callsign: "); Serial.println(txBuf.callsign);
 }
 
-
 /*
-    Store up to 6 chars in EEPROM at address 0 as this
-    radio user's callsign
-*/
+ *  Store this radio user's callsign in EEPROM
+ */
 void cmdSetCallsign(int arg_cnt, char **args)
 {
   if (arg_cnt < 2) return;
   byte i;
   int ea;
-  for (ea = EEPROM_CALLSIGN_ADDR, i = 0; 
-       i < MAX_CALLSIGN_LENGTH+1; 
-       ea++, i++)
+  for (i= 0, ea = EEPROM_CALLSIGN_ADDR; i < MAX_CALLSIGN_LENGTH+1; i++, ea++) // include null terminator
   {
     byte d = (i < MAX_CALLSIGN_LENGTH) ? toupper(args[1][i]) : 0;
-    EEPROM.write(ea, d); // capitalize
+    EEPROM.write(ea, d);
     if (d == 0) break;
   }
   setTxBufCallsign();
