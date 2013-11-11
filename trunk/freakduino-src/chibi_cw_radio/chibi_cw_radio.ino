@@ -13,11 +13,14 @@
 #define ROT_ENC_A      6
 #define ROT_ENC_B      7
 #define CW_KEY_PIN     8
-#define LED_PIN        9
+#define LED_TX_PIN     9
+#define LED_RX_PIN     2
 
-#define OLED_ADDRESS   0x27
+#define OLED_ADDRESS   0x27 // (must be 7-bit address. 8th is truncated.)
 #define OLED_TXSPOT_PAGE 2
 #define OLED_RXSPOT_PAGE 3
+
+#define AMP_ADDRESS 0x60 // 0bX110 0000 (must be 7-bit address. 8th is truncated.)
 
 #define RX_KEY_TIMEOUT 2000
 #define TX_KEY_TIMEOUT 1500
@@ -200,8 +203,9 @@ void setup()
   analogReference(EXTERNAL);
 
   pinMode(CW_KEY_PIN, INPUT_PULLUP);
-  pinMode(LED_PIN, OUTPUT);
-
+  pinMode(LED_TX_PIN, OUTPUT);
+  pinMode(LED_RX_PIN, OUTPUT);
+  
   pinMode(RX_AUDIO_PIN, OUTPUT);
   pinMode(TX_AUDIO_PIN, OUTPUT);
   
@@ -221,11 +225,32 @@ void setup()
   // NOTE: Can't use delay() after here,becaue the TX tone generator greaks it
   
   //temp
-  strcpy(txBuf.callsign, "ZL1HIT"); 
+  // strcpy(txBuf.callsign, "ZL1HIT"); // XXX: Not needed now?
   
   txBuf.id1 = CHIBI_CW_IDENT;
   txBuf.id2 = CHIBI_CW_IDENT;
   setTxBufCallsign();
+  
+  /************************/
+  /* Initialise Audio AMP */
+  /************************/
+  Serial.print("Amp init: ");
+  
+  // Set AMP to both channels enabled, bridge-tied mode
+  Wire.beginTransmission(AMP_ADDRESS); 
+  Wire.write(0x01); // register 1
+  Wire.write(0xe0); // 8'b 1110 0000 
+  if (Wire.endTransmission()) Serial.print("X");
+
+  // Set AMP volume to max (first 2 bits are mute control; 1=mute)
+  Wire.beginTransmission(AMP_ADDRESS); 
+  Wire.write(0x02); // register 2
+  Wire.write(0x35); // 8'b 0011 0101 ~ 0dB 
+  if (Wire.endTransmission()) Serial.print("X");
+  
+  Serial.println("");
+  delay(500);
+  
 } 
 
 /**************************************************************************/
@@ -305,7 +330,7 @@ void loop()  {
           {
             if (!keyState)            // if not tx key-down state
               setRxToneFreq(audioFreq);
-            digitalWrite(LED_PIN, 1);
+            digitalWrite(LED_RX_PIN, 1);
             lastAudioFreq = audioFreq;
           }
           rxKeyTimer = RX_KEY_TIMEOUT;
@@ -318,7 +343,7 @@ void loop()  {
         else // KEY-UP event
         {
           setNoRxTone();
-          digitalWrite(LED_PIN, 0);
+          digitalWrite(LED_RX_PIN, 0);
           lastAudioFreq = 0;
           rxBuf->freq = 0;
           rxKeyTimer = 0;
@@ -354,7 +379,7 @@ void loop()  {
       else // we have moved outside the filter pass-band
       {
         setNoRxTone();
-        digitalWrite(LED_PIN, 0);
+        digitalWrite(LED_RX_PIN, 0);
       }
     }      
   }
@@ -364,7 +389,7 @@ void loop()  {
   if (rxKeyTimer && --rxKeyTimer == 0) 
   {
     setNoRxTone();
-    digitalWrite(LED_PIN, 0);
+    digitalWrite(LED_RX_PIN, 0);
     lastAudioFreq = 0;
   }
 
@@ -392,7 +417,7 @@ void loop()  {
   // Check the CW Key, send make or break signals accordingly
   if (!digitalRead(CW_KEY_PIN))  // if KEY-DOWN (electrically inverted input)
   {
-    if (!keyState) // send KEY-UP event only if key was last UP
+    if (!keyState) // send KEY-DOWN event only if last known state was UP
     {
       txBuf.freq = tuningDial;
       txBuf.state = 255;  // KEY-DOWN event
@@ -404,6 +429,7 @@ void loop()  {
       keyState = true;
       setNoRxTone();                   // tx monitor tone overrides rx tone
       setTxToneFreq(monitorToneFreq);  // monitor tone on
+      digitalWrite(LED_TX_PIN, 1);
       
       Serial.print("KEY DOWN at: "); Serial.println(txBuf.freq, DEC);
     }
@@ -420,6 +446,7 @@ void loop()  {
       
       keyState = false;
       setNoTxTone();               // tx monitor tone off
+      digitalWrite(LED_TX_PIN, 0);
       if (rxKeyTimer)              // (re)enable receiver tone output if needed 
         setRxToneFreq(audioFreq);
       
